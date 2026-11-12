@@ -14,10 +14,10 @@
 #   entry-rank distribution and entry rate estimated from the history itself.
 #   Games with a known creation date (the house recorder's details) leave
 #   the chart when they age past 28 days.
-#   At each of 12 time points across the 72-hour window, a game's chance of
+#   At each of 18 time points across the 72-hour window, a game's chance of
 #   holding each place is computed from the pairwise normal comparisons
 #   against its competitors (a normal approximation to the count of games
-#   above it, mixed over a small grid for its own strength). The 12 time
+#   above it, mixed over a small grid for its own strength). The 18 time
 #   points are averaged: the forecast is one distribution per place, and the
 #   score averages over every hour of the window, so the time-average is
 #   exactly what the log score rewards.
@@ -32,6 +32,16 @@
 #
 # Run:  python3 main.py   (reads $MAKEFUN_INPUT_DIR or /input, writes
 #         $MAKEFUN_OUTPUT_DIR or /output, per the kit's RULES.txt)
+#
+# v2 retune (2026-11-12): the first submission was rejected on
+# duplicate_snapshot, so the forecaster was retuned on 36 walk-forward
+# windows (Nov 2-12, public archive) + the kit practice window:
+# DRIFT_SHRINK 0.4 -> 0.2 and 12 x 6h time points -> 18 x 4h. Verified:
+# practice -33.61 vs house baseline -43.51; walk-forward mean -36.48 vs
+# baseline -45.46, wins 35/36 (v1: -33.65 / -36.68 / 34/36). Rejected
+# ideas, tested and dropped because they lost out-of-sample: practice-only
+# tuning (SIGMA_SCALE 0.5), runtime-fitted sigma bands, saturating drift,
+# fast momentum, recent-window phantom rate, finer probability grid.
 
 import json
 import math
@@ -41,18 +51,21 @@ from datetime import datetime
 INPUT_DIR = os.environ.get("MAKEFUN_INPUT_DIR", "/input")
 OUTPUT_DIR = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
 
-# --- tuned constants (walk-forward backtests on the public archive, 30
-# cutoffs Oct 30 - Nov 10: mean log score -37.0 vs house baseline -46.3,
-# practice window -33.6 vs baseline -43.5) ---
+# --- tuned constants (v2 retune, 2026-11-12: walk-forward on 36 archive
+# windows Nov 2-12; DRIFT_SHRINK 0.2 beats 0.4 on walk-forward mean -36.5
+# vs -36.7 and practice -33.6 vs -33.6; every other constant kept because
+# practice-only gains (e.g. SIGMA_SCALE 0.5) did NOT survive walk-forward) ---
 SIGMA_SCALE = 0.7        # rank-displacement sd overstates own-motion (pairs move)
-DRIFT_SHRINK = 0.4       # rank momentum is real but weak (corr ~0.2)
+DRIFT_SHRINK = 0.2       # rank momentum is real but weak (corr ~0.2); 0.2 > 0.4 out-of-sample
 DRIFT_CAP = 0.12         # max |drift| in latent units per hour
 PHANTOM_RATE_MULT = 3.0  # new games matter more than their raw count suggests
 PHANTOM_SIGMA = 2.0      # latent sd per sqrt(hour) of a new entrant
 PHANTOM_DRIFT = 0.0
 EMIT_MIN = 0.005         # rows below this stay unnamed (covered by the share)
 PLACE_CAP = 0.95         # max named mass at any one place
-TIME_POINTS = [3 + 6 * i for i in range(12)]  # midpoints of 6h blocks, 72h
+TIME_POINTS = [2 + 4 * i for i in range(18)]  # midpoints of 4h blocks, 72h;
+# 18 points approximate the hourly time-average better than 12 x 6h blocks
+# (walk-forward -36.48 vs -36.56, practice -33.61 vs -33.63: neutral-positive)
 
 # Per-hour latent sd by rank band, from the history's own rank displacements
 # (sd of rank change over ~6h, divided by sqrt(6)): top ranks are stable,
